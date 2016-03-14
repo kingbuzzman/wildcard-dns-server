@@ -18,12 +18,15 @@ class DynamicResolver(client.Resolver):
     """
 
 
-    def __init__(self, resolv, wildcard_domain, mapping_table=None,
+    def __init__(self, servers, wildcard_domain, mapped_hosts=None,
             debug_level=0):
 
-        client.Resolver.__init__(self, resolv=resolv)
+        client.Resolver.__init__(self, servers=servers)
 
         self._debug_level = debug_level
+
+        if self._debug_level > 0:
+            print('nameservers %s' % servers, file=sys.stderr)
 
         # Create regex pattern corresponding to xip.io style DNS
         # wilcard domain.
@@ -45,8 +48,8 @@ class DynamicResolver(client.Resolver):
         patterns = []
         results = {}
 
-        if mapping_table:
-            for inbound, outbound in mapping_table.items():
+        if mapped_hosts:
+            for inbound, outbound in mapped_hosts.items():
                 label = 'RULE%s' % count
                 inbound = re.escape(inbound).replace('\\*', '.*') 
                 patterns.append('(?P<%s>%s)' % (label, inbound))
@@ -73,7 +76,7 @@ class DynamicResolver(client.Resolver):
         if match:
             ipaddr = match.group('ipaddr')
 
-            if self._debug_level > 2:
+            if self._debug_level > 1:
                 print('wildcard %s --> %s' % (name, ipaddr), file=sys.stderr)
 
             return ipaddr
@@ -90,13 +93,13 @@ class DynamicResolver(client.Resolver):
 
             result = self._mapping_results[label]
 
-            if self._debug_level > 2:
+            if self._debug_level > 1:
                 print('mapping %s --> %s' % (name, result), file=sys.stderr)
 
             return result
 
     def lookupAddress(self, name, timeout=None):
-        if self._debug_level > 1:
+        if self._debug_level > 2:
             print('address %s' % name, file=sys.stderr)
 
         result = self._localLookup(name)
@@ -117,7 +120,7 @@ class DynamicResolver(client.Resolver):
             # a CNAME and lookup name using normal DNS lookup.
 
             if result[0] not in string.digits:
-                if self._debug_level > 2:
+                if self._debug_level > 1:
                     print('cname %s' % result, file=sys.stderr)
 
                 return client.Resolver.lookupAddress(self, result, timeout)
@@ -132,25 +135,39 @@ class DynamicResolver(client.Resolver):
             return defer.succeed((answers, authority, additional))
 
         else:
+            if self._debug_level > 2:
+                print('fallback %s' % name, file=sys.stderr)
+
             return client.Resolver.lookupAddress(self, name, timeout)
 
 def main():
-    resolv_conf = os.environ.get('RESOLV_CONF', 'etc/resolv.conf')
+    name_servers = os.environ.get('NAME_SERVERS', '8.8.8.8,8.8.4.4')
+
+    server_list = []
+
+    for address in name_servers.split(','):
+        parts = address.strip().split(':')
+        if len(parts) > 1:
+            server_list.append((parts[0], int(parts[1])))
+        elif parts:
+            server_list.append((parts[0], 53))
 
     wildcard_domain = os.environ.get('WILDCARD_DOMAIN', 'xip.io')
 
-    mapping_json = os.environ.get('MAPPING_JSON', 'etc/mapping.json')
+    mapped_hosts = {}
+
+    mapping_json = os.environ.get('MAPPED_HOSTS')
 
     if mapping_json and os.path.exists(mapping_json):
         with open(mapping_json) as fp:
-            mapping_table = json.load(fp)
+            mapped_hosts = json.load(fp)
 
     debug_level = int(os.environ.get('DEBUG_LEVEL', '0'))
 
     factory = server.DNSServerFactory(
-        clients=[DynamicResolver(resolv=resolv_conf,
+        clients=[DynamicResolver(servers=server_list,
             wildcard_domain=wildcard_domain,
-            mapping_table=mapping_table,
+            mapped_hosts=mapped_hosts,
             debug_level=debug_level)]
     )
 

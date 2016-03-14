@@ -10,42 +10,7 @@ with intercepting DNS lookups for other purposes.
 
 ## Building the image
 
-To build the image yourself, first determine if you are happy with using
-Google DNS servers as a fallback for pass through DNS queries.
-
-If you do not want to use Google DNS and want to use whatever is your
-existing DNS provider, then copy the ``/etc/resolv.conf`` file from your
-local system into this directory as ``etc/resolv.conf``. This should be
-done before modifying any DNS settings to send queries via an instance of
-this image as you will otherwise get an infinite loop.
-
-```
-cp /etc/resolv.conf etc/resolv.conf
-```
-
-Alternatively, leave the default ``etc/resolv.conf`` as being for Google
-and you can provide a replacement using Docker volume mounting.
-
-If you want to provide a mapping table for glob style DNS wildcards,
-replace ``etc/mapping.json`` with your own file, where the format is a JSON
-style dictionary.
-
-```
-{
-    "*.foo.com": "127.0.0.1",
-    "www.bar.com": "bar.com",
-    "bar.com": "127.0.0.1"
-}
-```
-
-The target of the match should be an IP address, or a host name. Where it
-maps to a host name, that should be resolvable via subsequent applications
-of the mapping table, or via a public DNS lookup.
-
-As with the ``/etc/resolv.conf`` file, you can instead provide a
-replacement using Docker volume mounting.
-
-Now build the image:
+To build the image:
 
 ```
 docker build -t wildcard-dns-server .
@@ -64,7 +29,8 @@ By default the IP wildcards will use the ``xip.io`` domain as the default.
 To override the domain use the ``WILDCARD_DOMAIN`` environment variable.
 
 ```
-docker run -e WILDCARD_DOMAIN=wildcard.dev --rm -p 53:10053/tcp -p 53:10053/udp wildcard-dns-server
+docker run --rm -p 53:10053/tcp -p 53:10053/udp \
+ -e WILDCARD_DOMAIN=wildcard.dev wildcard-dns-server
 ```
 
 To test that the latter works, use the command:
@@ -77,18 +43,37 @@ In this example, you should get the result ``10.2.2.2``. Also try with other
 valid public addresses such as ``www.google.com`` and you should get back a
 list of the IPs for that service.
 
-If you want to provide a ``resolv.conf`` file when the image is being run,
-place it in a directory, and then use volume mounting to add that directory
-at the location ``/usr/src/app/etc`` in the container.
+By default Google DNS servers are used as fallback. If you wish to use
+alternate name servers, you can specify them using the ``NAME_SERVERS``
+environment variable when running the image. The value should be a comma
+separate list of name server hosts. An optional port may be specified for
+any host by including it after the host name, separated by a ':'.
+
+To provide a mapping of explicit host names, or using glob style DNS
+wildcard matches, you need to supply a JSON file defining the mappings.
 
 ```
-docker run -e --rm -p 53:10053/tcp -p 53:10053/udp -v /somepath/etc:/usr/src/app/etc wildcard-dns-server
+{
+    "*.foo.com": "127.0.0.1",
+    "www.bar.com": "bar.com",
+    "bar.com": "127.0.0.1",
+    "search.com": "www.google.com"
+}
 ```
 
-You can use mounting to also provide a mapping file for glob style DNS
-wildcard matches. Just be aware that if providing a mapping file, you
-must also provide a ``resolv.conf`` at the same time even if not
-overriding the default of using Google DNS as a fallback.
+The target of the match should be an IP address, or a host name. Where it
+maps to a host name, that should be resolvable via subsequent applications
+of the mapping table, or via a public DNS lookup.
+
+To get the mapping table into the running image, you should use volume
+mounting, as well as use the ``MAPPED_HOSTS`` environment variable to
+specify the location of the JSON file.
+
+```
+docker run -e --rm -p 53:10053/tcp -p 53:10053/udp \
+ -e MAPPED_HOSTS=/usr/src/app/etc/mappings.json \
+ -v `pwd`/etc:/usr/src/app/etc wildcard-dns-server
+```
 
 ## Using registry image
 
@@ -126,20 +111,23 @@ connection.
 
 To debug DNS lookups as they pass through the DNS server implemented by
 the image, you can set the ``DEBUG_LEVEL`` environment variable. The highest
-level of debug is ``2``.
+level of debug is ``3``.
 
 ```
-docker run -e DEBUG_LEVEL=2 -e WILDCARD_DOMAIN=wildcard.dev --rm -p 53:10053/tcp -p 53:10053/udp wildcard-dns-server
+docker run --rm -p 53:10053/tcp -p 53:10053/udp \
+ -e DEBUG_LEVEL=3 -e WILDCARD_DOMAIN=wildcard.dev wildcard-dns-server
 ```
 
 At the highest level you can see wildcard DNS name matches, as well as pass
 through requests.
 
 ```
+nameservers [('8.8.8.8', 53), ('8.8.4.4', 53)]
 wildcard .*\.(?P<ipaddr>\d+\.\d+\.\d+\.\d+)\.wildcard\.dev
-query 1 myapp.10.2.2.2.wildcard.dev
+address myapp.10.2.2.2.wildcard.dev
 lookup myapp.10.2.2.2.wildcard.dev
 wildcard myapp.10.2.2.2.wildcard.dev --> 10.2.2.2
-query 1 www.google.com
+address www.google.com
 lookup www.google.com
+fallback www.google.com
 ```
