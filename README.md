@@ -38,9 +38,9 @@ style dictionary.
 }
 ```
 
-The target of the match should be an IP address, or a host name, which if
-looked up a subsequent time through the same mapping table would yield an
-IP address.
+The target of the match should be an IP address, or a host name. Where it
+maps to a host name, that should be resolvable via subsequent applications
+of the mapping table, or via a public DNS lookup.
 
 As with the ``/etc/resolv.conf`` file, you can instead provide a
 replacement using Docker volume mounting.

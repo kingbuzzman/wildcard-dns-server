@@ -9,15 +9,20 @@ import string
 from twisted.internet import reactor, defer
 from twisted.names import client, dns, error, server
 
-class DynamicResolver(object):
+class DynamicResolver(client.Resolver):
     """
     A resolver which implements xip.io style IP resolution based on name.
-    as well as more conventional glob style DNS wildcard mapping.
+    as well as more conventional glob style DNS wildcard mapping. If no
+    match will fallback to specified DNS server for lookup.
 
     """
 
 
-    def __init__(self, wildcard_domain, mapping_table=None, debug_level=0):
+    def __init__(self, resolv, wildcard_domain, mapping_table=None,
+            debug_level=0):
+
+        client.Resolver.__init__(self, resolv=resolv)
+
         self._debug_level = debug_level
 
         # Create regex pattern corresponding to xip.io style DNS
@@ -57,7 +62,7 @@ class DynamicResolver(object):
             self._mapping = re.compile(pattern)
             self._mapping_results = results
 
-    def _lookup(self, name):
+    def _localLookup(self, name):
         if self._debug_level > 2:
             print('lookup %s' % name, file=sys.stderr)
 
@@ -73,7 +78,7 @@ class DynamicResolver(object):
 
             return ipaddr
 
-        # Next try and map comventional glob style wildcard mapping.
+        # Next try and map conventional glob style wildcard mapping.
 
         if self._mapping is None:
             return
@@ -88,34 +93,35 @@ class DynamicResolver(object):
             if self._debug_level > 2:
                 print('mapping %s --> %s' % (name, result), file=sys.stderr)
 
-            # If the result of the mapping didn't look like an IP
-            # address, then lookup that to resolve to a potenial IP
-            # address via xip.io style DNS wildcard match. No protection
-            # for loops here, so mapping table better not have been
-            # screwed up.
-
-            if result[0] not in string.digits:
-                return self._lookup(result)
-
             return result
 
-    def query(self, query, timeout=None):
+    def lookupAddress(self, name, timeout=None):
         if self._debug_level > 1:
-            print('query %s %s' % (query.type, query.name.name), file=sys.stderr)
+            print('address %s' % name, file=sys.stderr)
 
-        # Only bother with type A record searches.
+        result = self._localLookup(name)
 
-        if query.type != dns.A:
-            return defer.fail(error.DomainError())
+        # If doesn't look like an IP address, try and look it up again
+        # locally. Do this as many times as need to. Note there is no
+        # protection against loops here.
 
-        # Now do the actual dynamic lookups. If not matched locally
-        # then fail and allow subsequent resolver to lookup name.
-
-        name = query.name.name
-
-        result = self._lookup(name)
+        while result and result[0] not in string.digits:
+            mapped = self._localLookup(result)
+            if mapped is not None:
+                result = mapped
+            else:
+                break
 
         if result:
+            # Check if looks like IP address. If still not treat it like
+            # a CNAME and lookup name using normal DNS lookup.
+
+            if result[0] not in string.digits:
+                if self._debug_level > 2:
+                    print('cname %s' % result, file=sys.stderr)
+
+                return client.Resolver.lookupAddress(self, result, timeout)
+
             payload=dns.Record_A(address=bytes(result))
             answer = dns.RRHeader(name=name, payload=payload)
 
@@ -126,7 +132,7 @@ class DynamicResolver(object):
             return defer.succeed((answers, authority, additional))
 
         else:
-            return defer.fail(error.DomainError())
+            return client.Resolver.lookupAddress(self, name, timeout)
 
 def main():
     resolv_conf = os.environ.get('RESOLV_CONF', 'etc/resolv.conf')
@@ -142,9 +148,10 @@ def main():
     debug_level = int(os.environ.get('DEBUG_LEVEL', '0'))
 
     factory = server.DNSServerFactory(
-        clients=[DynamicResolver(wildcard_domain=wildcard_domain,
-            mapping_table=mapping_table, debug_level=debug_level),
-            client.Resolver(resolv=resolv_conf)]
+        clients=[DynamicResolver(resolv=resolv_conf,
+            wildcard_domain=wildcard_domain,
+            mapping_table=mapping_table,
+            debug_level=debug_level)]
     )
 
     protocol = dns.DNSDatagramProtocol(controller=factory)
