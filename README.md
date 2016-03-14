@@ -1,7 +1,8 @@
 # Wildcard DNS server
 
-Experimental Docker image for a DNS server implementing ``xip.io`` style IP
-wildcards as well as pass through for all other lookups.
+Experimental Docker image for a DNS server implementing ``xip.io`` style
+DNS wildcards, more conventional glob style DNS wildcard mappings, as well
+as pass through for all other lookups.
 
 This could be done using a very lightweight Docker image, but I am using
 the Twisted framework from Python as it more easily allows me to experiment
@@ -24,6 +25,25 @@ cp /etc/resolv.conf etc/resolv.conf
 
 Alternatively, leave the default ``etc/resolv.conf`` as being for Google
 and you can provide a replacement using Docker volume mounting.
+
+If you want to provide a mapping table for glob style DNS wildcards,
+replace ``etc/mapping.json`` with your own file, where the format is a JSON
+style dictionary.
+
+```
+{
+    "*.foo.com": "127.0.0.1",
+    "www.bar.com": "bar.com",
+    "bar.com": "127.0.0.1"
+}
+```
+
+The target of the match should be an IP address, or a host name, which if
+looked up a subsequent time through the same mapping table would yield an
+IP address.
+
+As with the ``/etc/resolv.conf`` file, you can instead provide a
+replacement using Docker volume mounting.
 
 Now build the image:
 
@@ -64,6 +84,11 @@ at the location ``/usr/src/app/etc`` in the container.
 ```
 docker run -e --rm -p 53:10053/tcp -p 53:10053/udp -v /somepath/etc:/usr/src/app/etc wildcard-dns-server
 ```
+
+You can use mounting to also provide a mapping file for glob style DNS
+wildcard matches. Just be aware that if providing a mapping file, you
+must also provide a ``resolv.conf`` at the same time even if not
+overriding the default of using Google DNS as a fallback.
 
 ## Using registry image
 
@@ -111,10 +136,10 @@ At the highest level you can see wildcard DNS name matches, as well as pass
 through requests.
 
 ```
-pattern .*\.(?P<ipaddr>\d+\.\d+\.\d+\.\d+)\.wildcard\.dev
+wildcard .*\.(?P<ipaddr>\d+\.\d+\.\d+\.\d+)\.wildcard\.dev
 query 1 myapp.10.2.2.2.wildcard.dev
-match myapp.10.2.2.2.wildcard.dev --> 10.2.2.2
+lookup myapp.10.2.2.2.wildcard.dev
+wildcard myapp.10.2.2.2.wildcard.dev --> 10.2.2.2
 query 1 www.google.com
-query 1 mtalk.google.com
-query 1 clients4.google.com
+lookup www.google.com
 ```
