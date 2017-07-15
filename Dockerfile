@@ -1,6 +1,9 @@
 FROM python:2.7-onbuild
 
-EXPOSE 10053
+EXPOSE 53
+
+ENV HTTP_PROXY ''
+ENV HTTPS_PROXY ''
 
 COPY server.py requirements.txt .
 
