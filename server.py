@@ -173,8 +173,8 @@ def main():
 
     protocol = dns.DNSDatagramProtocol(controller=factory)
 
-    reactor.listenUDP(10053, protocol)
-    reactor.listenTCP(10053, factory)
+    reactor.listenUDP(53, protocol)
+    reactor.listenTCP(53, factory)
 
     reactor.run()
 
